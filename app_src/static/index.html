@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时火灾监测系统</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            line-height: 1.6;
+        }
+        .container {
+            width: 90%;
+            max-width: 800px;
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-top: 20px;
+        }
+        h1 {
+            color: #d9534f; /* 主题红色 */
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        #video-container {
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 640px; /* 保持视频比例 */
+            height: auto; /* 自动高度 */
+            background-color: #000;
+            position: relative;
+            border-radius: 4px;
+            overflow: hidden; /* 确保子元素不溢出 */
+        }
+        #video-feed {
+            display: block;
+            width: 100%;
+            height: auto; /* 响应式视频 */
+        }
+        .alert {
+            padding: 12px 20px;
+            margin-bottom: 20px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background-color: #f2dede;
+            border-color: #ebccd1;
+            color: #a94442;
+            display: none; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            font-size: 0.95em;
+        }
+        .controls-section, #fire-events-container {
+            margin-bottom: 25px;
+        }
+        .controls-section h2, #fire-events-container h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #337ab7; /* 蓝色标题 */
+            border-bottom: 2px solid #eee;
+            padding-bottom: 8px;
+            font-size: 1.3em;
+        }
+        .control-group {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px; /* 元素间距 */
+        }
+        .control-group label {
+            font-weight: bold;
+            color: #555;
+        }
+        .control-group input[type="number"], .control-group input[type="range"] {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .control-group input[type="number"] {
+            width: 70px;
+        }
+        .control-group input[type="range"] {
+            flex-grow: 1;
+        }
+        .control-group button {
+            padding: 8px 18px;
+            background-color: #5cb85c; /* 绿色按钮 */
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        .control-group button:hover {
+            background-color: #4cae4c;
+        }
+        #fire-events-list {
+            list-style-type: none;
+            padding: 0;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        #fire-events-list li {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #fire-events-list li:last-child {
+            border-bottom: none;
+        }
+        .event-details {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .event-snapshot {
+            max-width: 180px; 
+            max-height: 135px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-top: 5px;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .event-snapshot:hover {
+            transform: scale(1.05);
+        }
+        .modal {
+            display: none; 
+            position: fixed; 
+            z-index: 1001; 
+            padding-top: 60px; 
+            left: 0;
+            top: 0;
+            width: 100%; 
+            height: 100%; 
+            overflow: auto; 
+            background-color: rgba(0,0,0,0.85); 
+        }
+        .modal-content {
+            margin: auto;
+            display: block;
+            width: auto;
+            max-width: 85%;
+            max-height: 85vh;
+            border-radius: 4px;
+        }
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 35px;
+            color: #f1f1f1;
+            font-size: 40px;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+        .close-modal:hover,
+        .close-modal:focus {
+            color: #bbb;
+            text-decoration: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>实时火灾监测系统</h1>
+
+        <div id="video-container">
+            <img id="video-feed" src="/video_feed" alt="摄像头画面加载中...">
+        </div>
+
+        <div class="controls-section">
+            <h2>控制面板</h2>
+            <div class="control-group">
+                <label for="camera-index">摄像头索引:</label>
+                <input type="number" id="camera-index" value="0" min="0">
+                <button id="change-camera-btn">切换</button>
+            </div>
+            <div class="control-group">
+                <label for="confidence-threshold">检测灵敏度 (置信度):</label>
+                <input type="range" id="confidence-threshold" min="0.1" max="0.9" step="0.05" value="0.5">
+                <span id="confidence-value">0.5</span>
+                <button id="set-confidence-btn">设置</button>
+            </div>
+        </div>
+
+        <div id="fire-alert-popup" class="alert">
+            <strong>火警!</strong> 检测到火灾发生！<br>
+            时间: <span id="alert-time"></span>
+        </div>
+
+        <div id="fire-events-container">
+            <h2>火灾事件记录</h2>
+            <ul id="fire-events-list">
+                <!-- 火灾事件将在这里动态添加 -->
+            </ul>
+        </div>
+    </div>
+
+    <!-- The Modal -->
+    <div id="snapshotModal" class="modal">
+        <span class="close-modal">&times;</span>
+        <img class="modal-content" id="modalImage">
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const socket = io.connect(location.protocol + '//' + document.domain + ':' + location.port + '/fire_detection');
+            const fireAlertPopup = document.getElementById("fire-alert-popup");
+            const alertTimeSpan = document.getElementById("alert-time");
+            const fireEventsList = document.getElementById("fire-events-list");
+            
+            const changeCameraButton = document.getElementById("change-camera-btn");
+            const cameraIndexInput = document.getElementById("camera-index");
+            const videoFeedImg = document.getElementById("video-feed");
+
+            const confidenceThresholdInput = document.getElementById("confidence-threshold");
+            const confidenceValueSpan = document.getElementById("confidence-value");
+            const setConfidenceButton = document.getElementById("set-confidence-btn");
+
+            const modal = document.getElementById("snapshotModal");
+            const modalImg = document.getElementById("modalImage");
+            const closeModalSpan = document.getElementsByClassName("close-modal")[0];
+
+            socket.on("connect", function() {
+                console.log("成功连接到火灾监测服务!");
+            });
+
+            function addEventToList(event) {
+                const listItem = document.createElement("li");
+                const detailsDiv = document.createElement("div");
+                detailsDiv.classList.add("event-details");
+                let detailsText = `时间: ${event.time}`;
+                if (event.details && event.details.length > 0) {
+                    const firstDetection = event.details[0];
+                    detailsText += ` - 置信度: ${firstDetection.confidence}`;
+                }
+                detailsDiv.textContent = detailsText;
+                listItem.appendChild(detailsDiv);
+
+                if (event.snapshot_path) {
+                    const snapshotImg = document.createElement("img");
+                    snapshotImg.src = "/" + event.snapshot_path + "?t=" + new Date().getTime(); 
+                    snapshotImg.alt = "火灾截图";
+                    snapshotImg.classList.add("event-snapshot");
+                    snapshotImg.onclick = function() {
+                        modal.style.display = "block";
+                        modalImg.src = this.src;
+                    }
+                    listItem.appendChild(snapshotImg);
+                }
+                fireEventsList.prepend(listItem);
+            }
+
+            socket.on("fire_alert", function(data) {
+                console.log("收到火警信息: ", data);
+                alertTimeSpan.textContent = data.time;
+                fireAlertPopup.style.display = "block";
+                addEventToList(data);
+                setTimeout(function() {
+                    fireAlertPopup.style.display = "none";
+                }, 5000);
+            });
+
+            socket.on("disconnect", function() {
+                console.log("与火灾监测服务断开连接。");
+            });
+
+            function fetchFireEvents() {
+                fetch("/get_fire_events")
+                    .then(response => response.json())
+                    .then(data => {
+                        fireEventsList.innerHTML = ""; 
+                        data.sort((a, b) => new Date(b.time.replace(/-/g, '/')) - new Date(a.time.replace(/-/g, '/'))); // Ensure correct date parsing for sorting
+                        data.forEach(event => addEventToList(event));
+                    })
+                    .catch(error => console.error("获取火灾事件记录失败:", error));
+            }
+            fetchFireEvents(); 
+
+            changeCameraButton.addEventListener("click", function() {
+                const cameraIndex = parseInt(cameraIndexInput.value);
+                if (isNaN(cameraIndex) || cameraIndex < 0) {
+                    alert("请输入有效的摄像头索引 (非负整数)。");
+                    return;
+                }
+                fetch("/change_camera", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ camera_index: cameraIndex }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    if (data.success) {
+                        videoFeedImg.src = "/video_feed?" + new Date().getTime(); 
+                    }
+                })
+                .catch(error => {
+                    console.error("切换摄像头请求错误:", error);
+                    alert("切换摄像头请求失败。");
+                });
+            });
+
+            confidenceThresholdInput.addEventListener("input", function() {
+                confidenceValueSpan.textContent = this.value;
+            });
+
+            setConfidenceButton.addEventListener("click", function() {
+                const threshold = parseFloat(confidenceThresholdInput.value);
+                fetch("/set_confidence", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ threshold: threshold }),
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                })
+                .catch(error => {
+                    console.error("设置置信度请求错误:", error);
+                    alert("设置置信度请求失败。");
+                });
+            });
+
+            closeModalSpan.onclick = function() {
+                modal.style.display = "none";
+            }
+            window.onclick = function(event) {
+                if (event.target == modal) {
+                    modal.style.display = "none";
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+
